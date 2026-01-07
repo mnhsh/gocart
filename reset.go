@@ -2,6 +2,8 @@ package main
 
 import "net/http"
 
+// Used only for local dev and manual testing.
+
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	if cfg.platform != "dev" {
 		w.WriteHeader(http.StatusForbidden)
