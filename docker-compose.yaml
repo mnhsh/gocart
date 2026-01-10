@@ -1,0 +1,79 @@
+services:
+  # PostgreSQL databases
+  user-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: users
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  product-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: products
+    volumes:
+      - product-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # User Service
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8081"
+      PLATFORM: dev
+      SECRET_KEY: ${SECRET_KEY:-d8560da2eac305b609da3225a8332d42d7cbdb677dbaf6a511c18fdc10ae19bf}
+      DB_URL: postgres://postgres:postgres@user-db:5432/users?sslmode=disable
+    depends_on:
+      user-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Product Service
+  product-service:
+    build:
+      context: ./services/product-service
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8082"
+      PLATFORM: dev
+      DB_URL: postgres://postgres:postgres@product-db:5432/products?sslmode=disable
+    depends_on:
+      product-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      SECRET_KEY: ${SECRET_KEY:-d8560da2eac305b609da3225a8332d42d7cbdb677dbaf6a511c18fdc10ae19bf}
+      USER_SERVICE_URL: http://user-service:8081
+      PRODUCT_SERVICE_URL: http://product-service:8082
+    depends_on:
+      - user-service
+      - product-service
+    restart: unless-stopped
+
+volumes:
+  user-db-data:
+  product-db-data:
