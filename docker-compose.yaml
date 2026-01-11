@@ -28,6 +28,19 @@ services:
       timeout: 5s
       retries: 5
 
+  cart-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: carts
+    volumes:
+      - cart-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   # User Service
   user-service:
     build:
@@ -57,6 +70,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Cart Service
+  cart-service:
+    build:
+      context: ./services/cart-service
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8083"
+      PLATFORM: dev
+      DB_URL: postgres://postgres:postgres@cart-db:5432/carts?sslmode=disable
+      PRODUCT_SERVICE_URL: http://product-service:8082
+    depends_on:
+      cart-db:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+    restart: unless-stopped
+
   # API Gateway
   api-gateway:
     build:
@@ -69,11 +99,14 @@ services:
       SECRET_KEY: ${SECRET_KEY:-d8560da2eac305b609da3225a8332d42d7cbdb677dbaf6a511c18fdc10ae19bf}
       USER_SERVICE_URL: http://user-service:8081
       PRODUCT_SERVICE_URL: http://product-service:8082
+      CART_SERVICE_URL: http://cart-service:8083
     depends_on:
       - user-service
       - product-service
+      - cart-service
     restart: unless-stopped
 
 volumes:
   user-db-data:
   product-db-data:
+  cart-db-data:

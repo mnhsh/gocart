@@ -36,6 +36,13 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config) {
 	// Admin product routes (auth + admin role required)
 	mux.HandleFunc("POST /admin/products", adminMiddleware(cfg, proxyHandler(cfg.ProductServiceURL, "/api/products")))
 	mux.HandleFunc("PATCH /admin/products/{productID}", adminMiddleware(cfg, proxyWithPathHandler(cfg.ProductServiceURL, "/api/products/")))
+
+	// Cart routes (all require auth, all need X-User-ID header)
+	mux.HandleFunc("GET /api/cart", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart")))
+	mux.HandleFunc("POST /api/cart/items", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart/items")))
+	mux.HandleFunc("PATCH /api/cart/items/{itemID}", authMiddleware(cfg, proxyWithUserIDAndPathHandler(cfg.CartServiceURL, "/api/cart/items/", "itemID")))
+	mux.HandleFunc("DELETE /api/cart/items/{itemID}", authMiddleware(cfg, proxyWithUserIDAndPathHandler(cfg.CartServiceURL, "/api/cart/items/", "itemID")))
+	mux.HandleFunc("DELETE /api/cart", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart")))
 }
 
 // proxyHandler creates a simple proxy handler for a target service
@@ -162,4 +169,30 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, targetURL string) {
 
 	// Copy response body
 	io.Copy(w, resp.Body)
+}
+
+func proxyWithUserIDHandler(targetURL, path string) http.HandlerFunc {
+  return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := auth.GetUserIDFromContext(r.Context())
+    if !ok {
+			response.RespondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
+      return
+    }
+    // Add X-User-ID header
+    r.Header.Set("X-User-ID", userID.String())
+		proxyRequest(w, r, targetURL+path)
+	}
+}
+
+func proxyWithUserIDAndPathHandler(targetURL, basePath, paramName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+    userID, ok := auth.GetUserIDFromContext(r.Context())
+		if !ok {
+			response.RespondWithError(w, http.StatusUnauthorized, "Unauthorized", nil)
+      return
+    }
+    r.Header.Set("X-User-ID", userID.String())
+    pathValue := r.PathValue(paramName)
+    proxyRequest(w, r, targetURL+basePath+pathValue)
+  }
 }

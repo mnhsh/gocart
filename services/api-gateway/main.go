@@ -22,6 +22,7 @@ func main() {
 	cfg := &config.Config{
 		UserServiceURL:    getEnvOrDefault("USER_SERVICE_URL", "http://localhost:8081"),
 		ProductServiceURL: getEnvOrDefault("PRODUCT_SERVICE_URL", "http://localhost:8082"),
+		CartServiceURL: os.Getenv("CART_SERVICE_URL"),
 		JWTSecret:         os.Getenv("SECRET_KEY"),
 	}
 

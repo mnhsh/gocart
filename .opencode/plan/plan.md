@@ -11,10 +11,10 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
 ## Tasks
 
 ### 1. Project Setup (~15 min)
-- [ ] Create `go.mod` with module `github.com/herodragmon/scalable-ecommerce/services/cart-service`
-- [ ] Configure `sqlc.yaml` for PostgreSQL code generation
+- [x] Create `go.mod` with module `github.com/herodragmon/scalable-ecommerce/services/cart-service`
+- [x] Configure `sqlc.yaml` for PostgreSQL code generation
 - [ ] Create `.env.example` with required environment variables
-- [ ] Create directory structure:
+- [x] Create directory structure:
   ```
   services/cart-service/
   ├── internal/
@@ -33,7 +33,7 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
 ### 2. Database Layer (~30 min)
 
 #### Schema: `sql/schema/001_carts.sql`
-- [ ] Create `carts` table:
+- [x] Create `carts` table:
   ```sql
   CREATE TABLE carts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -42,7 +42,7 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
       updated_at TIMESTAMP NOT NULL DEFAULT now()
   );
   ```
-- [ ] Create `cart_items` table:
+- [x] Create `cart_items` table:
   ```sql
   CREATE TABLE cart_items (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -57,18 +57,19 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
   ```
 
 #### Queries: `sql/queries/carts.sql`
-- [ ] `GetCartByUserID` - Get cart for a user
-- [ ] `CreateCart` - Create new cart for user
-- [ ] `GetCartItems` - Get all items in a cart
-- [ ] `GetCartItemByID` - Get single cart item
-- [ ] `AddCartItem` - Insert item into cart
-- [ ] `UpdateCartItemQuantity` - Update item quantity
-- [ ] `DeleteCartItem` - Remove item from cart
-- [ ] `ClearCart` - Delete all items from cart
-- [ ] `DeleteCart` - Delete entire cart
+- [x] `GetCartByUserID` - Get cart for a user
+- [x] `CreateCart` - Create new cart for user
+- [x] `GetCartItems` - Get all items in a cart
+- [x] `GetCartItemByID` - Get single cart item
+- [x] `GetCartItemByProductID` - Get cart item by product (for duplicate check)
+- [x] `AddCartItem` - Insert item into cart
+- [x] `UpdateCartItemQuantity` - Update item quantity
+- [x] `DeleteCartItem` - Remove item from cart
+- [x] `ClearCart` - Delete all items from cart
+- [x] `DeleteCart` - Delete entire cart
 
 #### Generate Code
-- [ ] Run `sqlc generate` in cart-service directory
+- [x] Run `sqlc generate` in cart-service directory
 
 ---
 
@@ -76,6 +77,9 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
 
 #### File: `internal/client/product.go`
 - [ ] Create `ProductClient` struct with `BaseURL` and `HTTPClient`
+- [ ] Create `NewProductClient(baseURL string, timeout time.Duration) *ProductClient` constructor
+  - Initialize `http.Client` with timeout
+  - Store BaseURL
 - [ ] Create `Product` struct for response:
   ```go
   type Product struct {
@@ -87,9 +91,11 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
   ```
 - [ ] Implement `GetProduct(ctx, productID)` method:
   - Returns `(*Product, bool, error)` - (product, exists, error)
-  - Calls `GET http://product-service:8082/api/products/{id}`
-  - Handle 404 as "not found" (exists=false)
-  - Handle network errors appropriately
+  - Calls `GET {BaseURL}/api/products/{id}`
+  - Handle 404 as "not found" (exists=false, err=nil)
+  - Handle network/other errors appropriately (exists=false, err=error)
+
+**Note:** Stock validation is NOT done in cart-service. Cart is a wishlist - users can add items even if out of stock. Stock is validated at order time.
 
 ---
 
@@ -99,10 +105,10 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
 - [ ] Create `Config` struct with:
   - `DB *database.Queries`
   - `Platform string`
-  - `ProductServiceURL string`
+  - `ProductClient *client.ProductClient`
 
 #### Response: `internal/response/json.go`
-- [ ] Copy from existing services (RespondWithJSON, RespondWithError)
+- [x] Copy from existing services (RespondWithJSON, RespondWithError)
 
 #### Handlers: `internal/handlers/handlers.go`
 
@@ -119,10 +125,26 @@ Build the Shopping Cart microservice for the e-commerce platform. The cart servi
 
 **Add to Cart Flow:**
 1. Extract user ID from `X-User-ID` header (set by gateway)
-2. Call product service to validate product exists
-3. Get or create cart for user
-4. Add item with product's current price
-5. Return cart item
+2. Validate `product_id` and `quantity` from request body
+3. Call product service to validate product exists and get current price
+4. If product not found: return 404
+5. Get cart for user (`GetCartByUserID`)
+6. If no cart exists: create one (`CreateCart`)
+7. Check if product already in cart (`GetCartItemByProductID`)
+8. If exists: update quantity by ADDING to current (`UpdateCartItemQuantity` with `existingQty + newQty`)
+9. If not exists: add new item with product's current price (`AddCartItem`)
+10. Return the cart item
+
+**Error Handling:**
+- Product not found: 404
+- Invalid UUID: 400
+- Quantity <= 0: 400
+- Missing X-User-ID header: 401
+- DB errors: 500
+
+**Internal routes (for order service):**
+- No auth middleware - trust Docker network isolation (same pattern as user-service)
+- These endpoints are not exposed through API Gateway
 
 **Request/Response Examples:**
 ```
@@ -143,7 +165,7 @@ Response: {
 #### Main: `main.go`
 - [ ] Load environment variables
 - [ ] Connect to database
-- [ ] Initialize product client
+- [ ] Initialize product client with timeout (10s recommended)
 - [ ] Register routes
 - [ ] Start server on PORT (default 8083)
 
@@ -193,24 +215,28 @@ Response: {
     restart: unless-stopped
   ```
 - [ ] Add `cart-db-data` to volumes section
-- [ ] Update `api-gateway` to add `CART_SERVICE_URL` env var
+- [ ] Update `api-gateway` to add `CART_SERVICE_URL: http://cart-service:8083` env var
 
 ---
 
-### 6. API Gateway Integration (~15 min)
+### 6. API Gateway Integration (~20 min)
 
 #### Update: `services/api-gateway/internal/proxy/proxy.go`
-- [ ] Add cart service URL to config
-- [ ] Add authenticated routes:
+- [ ] Create `proxyWithUserIDHandler(targetURL, path string)` function that:
+  - Gets userID from context (already set by `authMiddleware`)
+  - Adds `X-User-ID: {userID}` header to the proxied request
+  - Proxies to target service
+- [ ] Create `proxyWithUserIDAndPathHandler(targetURL, basePath, paramName string)` for routes with path params
+  - Same as above but also extracts path parameter (e.g., `itemID`)
+- [ ] Add cart routes:
   ```go
-  // Cart routes (all require auth)
-  mux.HandleFunc("GET /api/cart", authMiddleware(cfg, proxyHandler(cfg.CartServiceURL, "/api/cart")))
-  mux.HandleFunc("POST /api/cart/items", authMiddleware(cfg, proxyHandler(cfg.CartServiceURL, "/api/cart/items")))
-  mux.HandleFunc("PATCH /api/cart/items/{itemID}", authMiddleware(cfg, proxyWithPathHandler(cfg.CartServiceURL, "/api/cart/items/")))
-  mux.HandleFunc("DELETE /api/cart/items/{itemID}", authMiddleware(cfg, proxyWithPathHandler(cfg.CartServiceURL, "/api/cart/items/")))
-  mux.HandleFunc("DELETE /api/cart", authMiddleware(cfg, proxyHandler(cfg.CartServiceURL, "/api/cart")))
+  // Cart routes (all require auth, all need X-User-ID header)
+  mux.HandleFunc("GET /api/cart", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart")))
+  mux.HandleFunc("POST /api/cart/items", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart/items")))
+  mux.HandleFunc("PATCH /api/cart/items/{itemID}", authMiddleware(cfg, proxyWithUserIDAndPathHandler(cfg.CartServiceURL, "/api/cart/items/", "itemID")))
+  mux.HandleFunc("DELETE /api/cart/items/{itemID}", authMiddleware(cfg, proxyWithUserIDAndPathHandler(cfg.CartServiceURL, "/api/cart/items/", "itemID")))
+  mux.HandleFunc("DELETE /api/cart", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart")))
   ```
-- [ ] Pass `X-User-ID` header to downstream service in auth middleware
 
 #### Update: `services/api-gateway/internal/config/config.go`
 - [ ] Add `CartServiceURL string` to Config struct
@@ -266,6 +292,13 @@ curl -X DELETE http://localhost:8080/api/cart/items/<item-id> \
 # 8. Clear cart
 curl -X DELETE http://localhost:8080/api/cart \
   -H "Authorization: Bearer <token>"
+
+# 9. Test adding same product again (should add to quantity)
+curl -X POST http://localhost:8080/api/cart/items \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"product_id": "<same-product-uuid>", "quantity": 3}'
+# Expected: quantity should now be 5 (2 + 3)
 ```
 
 ---
@@ -286,10 +319,28 @@ PRODUCT_SERVICE_URL=http://localhost:8082
 
 ---
 
+## Files to Create/Edit Summary
+
+| File | Action | Status |
+|------|--------|--------|
+| `services/cart-service/internal/client/product.go` | Complete implementation | Pending |
+| `services/cart-service/internal/config/config.go` | Create | Pending |
+| `services/cart-service/internal/handlers/handlers.go` | Create | Pending |
+| `services/cart-service/main.go` | Implement | Pending |
+| `services/cart-service/Dockerfile` | Create | Pending |
+| `services/cart-service/.env.example` | Create | Pending |
+| `docker-compose.yaml` | Add cart-db + cart-service | Pending |
+| `services/api-gateway/internal/config/config.go` | Add CartServiceURL | Pending |
+| `services/api-gateway/internal/proxy/proxy.go` | Add cart routes + X-User-ID forwarding | Pending |
+| `services/api-gateway/main.go` | Load CART_SERVICE_URL env | Pending |
+
+---
+
 ## Success Criteria
 - [ ] All endpoints return correct responses
-- [ ] Adding non-existent product returns 400 error
+- [ ] Adding non-existent product returns 404 error
+- [ ] Adding same product twice updates quantity (adds to existing)
 - [ ] Cart persists between requests
 - [ ] Clearing cart removes all items
 - [ ] Service runs in Docker alongside other services
-- [ ] API Gateway correctly routes all cart requests
+- [ ] API Gateway correctly routes all cart requests with X-User-ID header
