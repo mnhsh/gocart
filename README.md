@@ -1,6 +1,6 @@
 # Scalable E-Commerce Platform
 
-A microservices-based e-commerce platform built with Go. This project demonstrates a clean migration from a monolithic architecture to microservices.
+A microservices-based e-commerce platform built with Go.
 
 ## Architecture
 
