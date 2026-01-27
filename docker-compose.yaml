@@ -63,6 +63,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
   # User Service
   user-service:
     build:
@@ -92,8 +107,11 @@ services:
       PORT: "8082"
       PLATFORM: dev
       DB_URL: postgres://postgres:postgres@product-db:5432/products?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       product-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/health"]
@@ -134,12 +152,15 @@ services:
       DB_URL: postgres://postgres:postgres@order-db:5432/orders?sslmode=disable
       CART_SERVICE_URL: http://cart-service:8083
       PRODUCT_SERVICE_URL: http://product-service:8082
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       order-db:
         condition: service_healthy
       cart-service:
         condition: service_healthy
       product-service:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8084/health"]
@@ -168,6 +189,8 @@ services:
       - cart-service
       - order-service
     restart: unless-stopped
+
+  
 
 volumes:
   user-db-data:
