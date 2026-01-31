@@ -1,164 +1,229 @@
 # Scalable E-Commerce Platform
 
-A microservices-based e-commerce platform built with Go.
+A microservices-based e-commerce platform built with Go, featuring event-driven architecture with RabbitMQ and a CLI demo tool.
+
+## Motivation
+
+This project was built as a portfolio piece to demonstrate backend engineering skills. It showcases:
+
+- **Microservices Architecture** - 5 independent services with clear boundaries
+- **Event-Driven Design** - Asynchronous stock updates via RabbitMQ
+- **API Gateway Pattern** - Centralized routing, authentication, and RBAC
+- **Database Per Service** - Each service owns its data (4 PostgreSQL instances)
+- **Clean Go Code** - Idiomatic patterns, SQLC for type-safe database queries
+- **Full Working Demo** - CLI tool to exercise the entire system end-to-end
+
+## Features
+
+- User registration and JWT authentication with refresh tokens
+- Role-based access control (admin vs regular users)
+- Product catalog with admin CRUD operations
+- Shopping cart management
+- Order creation and cancellation
+- Async stock updates via RabbitMQ (order → stock decrement, cancel → stock restore)
+- Interactive CLI for demoing the complete flow
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Clients                                  │
-│                    (Web, Mobile, API)                           │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      API Gateway                                 │
-│                    (Port 8080)                                   │
-│  - Request routing                                               │
-│  - JWT authentication                                            │
-│  - Admin authorization                                           │
-└─────────────────────────────────────────────────────────────────┘
-              │                │                │
-    ┌─────────┘                │                └─────────┐
-    ▼                          ▼                          ▼
-┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│ User Service  │   │Product Service│   │ Cart Service  │
-│  (Port 8081)  │   │  (Port 8082)  │   │  (Port 8083)  │
-│               │   │               │   │               │
-│- Registration │   │- Product CRUD │   │- Add/remove   │
-│- Auth (JWT)   │   │- Stock mgmt   │   │  items        │
-│- Token refresh│   │               │   │- Update qty   │
-└───────┬───────┘   └───────┬───────┘   └───────┬───────┘
-        │                   │                   │
-        ▼                   ▼                   ▼
-┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│  PostgreSQL   │   │  PostgreSQL   │   │  PostgreSQL   │
-│   (users)     │   │  (products)   │   │   (carts)     │
-│  Port 5433    │   │  Port 5434    │   │  Port 5435    │
-└───────────────┘   └───────────────┘   └───────────────┘
+                                    ┌─────────────┐
+                                    │     CLI     │
+                                    └──────┬──────┘
+                                           │
+                                           ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            API Gateway (:8080)                                │
+│                    JWT Auth · RBAC · Request Routing                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+         │                    │                    │                    │
+         ▼                    ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  User Service   │  │ Product Service │  │  Cart Service   │  │  Order Service  │
+│    (:8081)      │  │    (:8082)      │  │    (:8083)      │  │    (:8084)      │
+├─────────────────┤  ├─────────────────┤  ├─────────────────┤  ├─────────────────┤
+│ • Registration  │  │ • Product CRUD  │  │ • Add/remove    │  │ • Create order  │
+│ • JWT Auth      │  │ • Stock mgmt    │  │ • Update qty    │  │ • Cancel order  │
+│ • Token refresh │  │ • RabbitMQ      │  │ • Price lookup  │  │ • RabbitMQ      │
+│                 │  │   consumer      │  │                 │  │   publisher     │
+└────────┬────────┘  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+         │                    │                    │                    │
+         ▼                    ▼                    ▼                    ▼
+    [PostgreSQL]         [PostgreSQL]        [PostgreSQL]         [PostgreSQL]
+      :5433                :5434               :5435                :5436
+
+                    ┌───────────────────────────────────────┐
+                    │              RabbitMQ                 │
+                    │          (:5672 / :15672)             │
+                    ├───────────────────────────────────────┤
+                    │  Exchange: orders                     │
+                    │  • order.created  → decrement stock   │
+                    │  • order.cancelled → restore stock    │
+                    └───────────────────────────────────────┘
+                              ▲                   │
+                              │                   │
+                   publish ───┘                   └─── consume
+                (order-service)               (product-service)
 ```
 
-## Services
+## Tech Stack
 
-### API Gateway (`services/api-gateway`)
-The entry point for all client requests. Handles:
-- Request routing to appropriate microservices
-- JWT token validation
-- Role-based access control (admin routes)
-- Request/response proxying
-
-### User Service (`services/user-service`)
-Manages user authentication and identity:
-- User registration (`POST /api/users`)
-- Login with JWT generation (`POST /api/login`)
-- Token refresh (`POST /api/refresh`)
-- Token revocation / logout (`POST /api/revoke`)
-- Internal user lookup (for gateway)
-
-### Product Service (`services/product-service`)
-Handles the product catalog:
-- List products (`GET /api/products`)
-- Get product by ID (`GET /api/products/{id}`)
-- Create product - admin only (`POST /admin/products`)
-- Update product - admin only (`PATCH /admin/products/{id}`)
-
-### Cart Service (`services/cart-service`)
-Manages user shopping carts:
-- Get cart (`GET /api/cart`)
-- Add item to cart (`POST /api/cart/items`)
-- Update item quantity (`PATCH /api/cart/items/{id}`)
-- Remove item from cart (`DELETE /api/cart/items/{id}`)
-- Clear entire cart (`DELETE /api/cart`)
+| Technology | Purpose |
+|------------|---------|
+| Go 1.22 | Primary language |
+| PostgreSQL 16 | Database (one per service) |
+| RabbitMQ | Message broker for async events |
+| SQLC | Type-safe SQL code generation |
+| Goose | Database migrations |
+| JWT (HS256) | Authentication tokens |
+| Argon2id | Password hashing |
+| Docker Compose | Container orchestration |
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### Prerequisites
+
+- Docker and Docker Compose
+- Go 1.22+ (for CLI and local development)
+- [Goose](https://github.com/pressly/goose) (for migrations)
+
+### 1. Start Services
 
 ```bash
+# Clone and enter the project
+cd scalable-ecommerce
+
 # Start all services
 docker compose up -d
 
-# Run database migrations (first time only)
-goose -dir services/user-service/sql/schema postgres "postgres://postgres:postgres@localhost:5433/users?sslmode=disable" up
-goose -dir services/product-service/sql/schema postgres "postgres://postgres:postgres@localhost:5434/products?sslmode=disable" up
-goose -dir services/cart-service/sql/schema postgres "postgres://postgres:postgres@localhost:5435/carts?sslmode=disable" up
-
-# View logs
-docker compose logs -f
-
-# Stop all services
-docker compose down
+# Verify all containers are running
+docker compose ps
 ```
 
-The API will be available at `http://localhost:8080`
+### 2. Run Migrations
 
-### Database Ports (Docker)
+```bash
+# User service
+goose -dir services/user-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5433/users?sslmode=disable" up
 
-| Database | Container | Host Port |
-|----------|-----------|-----------|
-| users | user-db | 5433 |
-| products | product-db | 5434 |
-| carts | cart-db | 5435 |
+# Product service
+goose -dir services/product-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5434/products?sslmode=disable" up
 
-### Running Locally (Without Docker)
+# Cart service
+goose -dir services/cart-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5435/carts?sslmode=disable" up
 
-1. **Prerequisites:**
-   - Go 1.22+
-   - PostgreSQL 16+
-   - goose (for migrations)
-   - sqlc (for database code generation)
+# Order service
+goose -dir services/order-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5436/orders?sslmode=disable" up
+```
 
-2. **Set up databases:**
-   ```bash
-   createdb users
-   createdb products
-   createdb carts
-   ```
+### 3. Build and Run CLI
 
-3. **Run migrations:**
-   ```bash
-   # User service
-   goose -dir services/user-service/sql/schema postgres "postgres://localhost/users?sslmode=disable" up
-   
-   # Product service
-   goose -dir services/product-service/sql/schema postgres "postgres://localhost/products?sslmode=disable" up
-   
-   # Cart service
-   goose -dir services/cart-service/sql/schema postgres "postgres://localhost/carts?sslmode=disable" up
-   ```
+```bash
+cd services/cli
+go build -o cli .
+./cli
+```
 
-4. **Configure environment:**
-   ```bash
-   cp services/user-service/.env.example services/user-service/.env
-   cp services/product-service/.env.example services/product-service/.env
-   cp services/cart-service/.env.example services/cart-service/.env
-   cp services/api-gateway/.env.example services/api-gateway/.env
-   ```
+### 4. Demo Credentials
 
-5. **Start services:**
-   ```bash
-   # Terminal 1 - User Service
-   cd services/user-service && go run .
-   
-   # Terminal 2 - Product Service
-   cd services/product-service && go run .
-   
-   # Terminal 3 - Cart Service
-   cd services/cart-service && go run .
-   
-   # Terminal 4 - API Gateway
-   cd services/api-gateway && go run .
-   ```
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | `admin@example.com` | `admin123` |
+
+Admin users can access the "Manage Products" menu to add/delete products.
+
+## Usage
+
+### CLI Demo
+
+The CLI provides an interactive way to demo the entire system:
+
+```
+========================================
+       ECOM CLI - E-Commerce Store     
+========================================
+
+--- Welcome ---
+1. Login
+2. Register
+3. Exit
+```
+
+**Customer Flow:**
+1. Register a new account or login
+2. Browse products
+3. Add items to cart
+4. Checkout (creates order, decrements stock via RabbitMQ)
+5. View orders
+6. Cancel order (restores stock via RabbitMQ)
+
+**Admin Flow:**
+1. Login as `admin@example.com`
+2. Select "Admin: Manage Products"
+3. Add new products (name, description, price, stock)
+4. Delete existing products
+
+### API Examples
+
+**Register a User:**
+```bash
+curl -X POST http://localhost:8080/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "password123"}'
+```
+
+**Login:**
+```bash
+curl -X POST http://localhost:8080/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "password123"}'
+```
+
+**Get Products:**
+```bash
+curl http://localhost:8080/api/products
+```
+
+**Add to Cart:**
+```bash
+curl -X POST http://localhost:8080/api/cart/items \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"product_id": "<product-uuid>", "quantity": 2}'
+```
+
+**Create Order:**
+```bash
+curl -X POST http://localhost:8080/api/orders \
+  -H "Authorization: Bearer <token>"
+```
+
+**Cancel Order:**
+```bash
+curl -X DELETE http://localhost:8080/api/orders/<order-id> \
+  -H "Authorization: Bearer <token>"
+```
+
+**Create Product (Admin):**
+```bash
+curl -X POST http://localhost:8080/admin/products \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"name": "Gaming Laptop", "description": "High performance", "price_cents": 149999, "stock": 10}'
+```
 
 ## API Endpoints
 
-### Public Endpoints (No Auth Required)
+### Public Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/users` | Register a new user |
 | POST | `/api/login` | Login and get JWT token |
-| POST | `/api/refresh` | Refresh access token (uses cookie) |
+| POST | `/api/refresh` | Refresh access token |
 | POST | `/api/revoke` | Revoke refresh token (logout) |
 | GET | `/api/products` | List all active products |
 | GET | `/api/products/{id}` | Get product by ID |
@@ -173,6 +238,10 @@ The API will be available at `http://localhost:8080`
 | PATCH | `/api/cart/items/{id}` | Update item quantity |
 | DELETE | `/api/cart/items/{id}` | Remove item from cart |
 | DELETE | `/api/cart` | Clear entire cart |
+| POST | `/api/orders` | Create order from cart |
+| GET | `/api/orders` | List user's orders |
+| GET | `/api/orders/{id}` | Get order by ID |
+| DELETE | `/api/orders/{id}` | Cancel order |
 
 ### Admin Endpoints (Admin Role Required)
 
@@ -180,91 +249,48 @@ The API will be available at `http://localhost:8080`
 |--------|----------|-------------|
 | POST | `/admin/products` | Create a new product |
 | PATCH | `/admin/products/{id}` | Update a product |
+| DELETE | `/admin/products/{id}` | Delete a product |
 
-## Example Usage
+## Services Overview
 
-### Register a User
-```bash
-curl -X POST http://localhost:8080/api/users \
-  -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "password": "password123"}'
+### API Gateway (`services/api-gateway`)
+Entry point for all requests. Handles JWT validation, role-based authorization, and request routing to downstream services.
+
+### User Service (`services/user-service`)
+Manages user registration, authentication, and JWT token lifecycle. Passwords are hashed using Argon2id.
+
+### Product Service (`services/product-service`)
+Handles product catalog CRUD operations. Also consumes RabbitMQ messages to update stock when orders are created or cancelled.
+
+### Cart Service (`services/cart-service`)
+Manages shopping carts. Fetches current prices from product-service when items are added.
+
+### Order Service (`services/order-service`)
+Creates orders from cart contents and publishes events to RabbitMQ. Supports order cancellation.
+
+## Event-Driven Architecture
+
+Stock updates are handled asynchronously via RabbitMQ to decouple the order and product services:
+
+```
+┌──────────────┐     order.created      ┌─────────────────┐
+│Order Service │ ──────────────────────▶│ Product Service │
+│  (publisher) │                        │   (consumer)    │
+│              │     order.cancelled    │                 │
+│              │ ──────────────────────▶│  Updates stock  │
+└──────────────┘                        └─────────────────┘
 ```
 
-### Login
-```bash
-curl -X POST http://localhost:8080/api/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "password": "password123"}'
-```
+**Flow:**
+1. User creates order → order-service publishes `order.created` event
+2. product-service consumes event → decrements stock for each item
+3. User cancels order → order-service publishes `order.cancelled` event
+4. product-service consumes event → restores stock for each item
 
-### Get Products
-```bash
-curl http://localhost:8080/api/products
-```
-
-### Add Item to Cart
-```bash
-curl -X POST http://localhost:8080/api/cart/items \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <jwt-token>" \
-  -d '{"product_id": "<product-uuid>", "quantity": 2}'
-```
-
-### Get Cart
-```bash
-curl http://localhost:8080/api/cart \
-  -H "Authorization: Bearer <jwt-token>"
-```
-
-### Update Cart Item Quantity
-```bash
-curl -X PATCH http://localhost:8080/api/cart/items/<item-id> \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <jwt-token>" \
-  -d '{"quantity": 5}'
-```
-
-### Remove Item from Cart
-```bash
-curl -X DELETE http://localhost:8080/api/cart/items/<item-id> \
-  -H "Authorization: Bearer <jwt-token>"
-```
-
-### Create Product (Admin)
-```bash
-curl -X POST http://localhost:8080/admin/products \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <admin-jwt-token>" \
-  -d '{"name": "Widget", "price_cents": 999, "stock": 100}'
-```
-
-## Development
-
-### Regenerate Database Code
-```bash
-# User Service
-cd services/user-service && sqlc generate
-
-# Product Service
-cd services/product-service && sqlc generate
-
-# Cart Service
-cd services/cart-service && sqlc generate
-```
-
-### Run Tests
-```bash
-# Run all tests
-go test ./...
-
-# Run tests for specific service
-cd services/user-service && go test ./...
-```
-
-### Build Docker Images
-```bash
-docker compose build
-```
+**Benefits:**
+- Services are decoupled (order-service doesn't call product-service directly)
+- Resilient to temporary failures (messages are queued)
+- Scalable (can add more consumers if needed)
 
 ## Environment Variables
 
@@ -276,12 +302,12 @@ docker compose build
 | `USER_SERVICE_URL` | User service URL | `http://localhost:8081` |
 | `PRODUCT_SERVICE_URL` | Product service URL | `http://localhost:8082` |
 | `CART_SERVICE_URL` | Cart service URL | `http://localhost:8083` |
+| `ORDER_SERVICE_URL` | Order service URL | `http://localhost:8084` |
 
 ### User Service
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `8081` |
-| `PLATFORM` | Environment (dev/prod) | `dev` |
 | `SECRET_KEY` | JWT signing key | - |
 | `DB_URL` | PostgreSQL connection string | - |
 
@@ -289,23 +315,120 @@ docker compose build
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `8082` |
-| `PLATFORM` | Environment (dev/prod) | `dev` |
 | `DB_URL` | PostgreSQL connection string | - |
+| `RABBITMQ_URL` | RabbitMQ connection string | - |
 
 ### Cart Service
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `8083` |
-| `PLATFORM` | Environment (dev/prod) | `dev` |
 | `DB_URL` | PostgreSQL connection string | - |
 | `PRODUCT_SERVICE_URL` | Product service URL | - |
 
-## Tech Stack
+### Order Service
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Server port | `8084` |
+| `DB_URL` | PostgreSQL connection string | - |
+| `CART_SERVICE_URL` | Cart service URL | - |
+| `PRODUCT_SERVICE_URL` | Product service URL | - |
+| `RABBITMQ_URL` | RabbitMQ connection string | - |
 
-- **Language:** Go 1.22
-- **Database:** PostgreSQL 16
-- **SQL Generation:** SQLC
-- **Migrations:** Goose
-- **Authentication:** JWT (HS256)
-- **Password Hashing:** Argon2id
-- **Containerization:** Docker
+## Development
+
+### Regenerate Database Code
+
+```bash
+cd services/user-service && sqlc generate
+cd services/product-service && sqlc generate
+cd services/cart-service && sqlc generate
+cd services/order-service && sqlc generate
+```
+
+### Rebuild Services
+
+```bash
+docker compose up -d --build
+```
+
+### View Logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f order-service
+```
+
+### RabbitMQ Management UI
+
+Access the RabbitMQ management dashboard at `http://localhost:15672`
+
+- Username: `guest`
+- Password: `guest`
+
+### Stop Services
+
+```bash
+docker compose down
+
+# Remove volumes (reset databases)
+docker compose down -v
+```
+
+## Contributing
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/mnhsh/scalable-ecommerce.git
+cd scalable-ecommerce
+```
+
+### Start the Services
+
+```bash
+docker compose up -d
+```
+
+### Run Migrations
+
+```bash
+goose -dir services/user-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5433/users?sslmode=disable" up
+
+goose -dir services/product-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5434/products?sslmode=disable" up
+
+goose -dir services/cart-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5435/carts?sslmode=disable" up
+
+goose -dir services/order-service/sql/schema postgres \
+  "postgres://postgres:postgres@localhost:5436/orders?sslmode=disable" up
+```
+
+### Build the CLI
+
+```bash
+cd services/cli
+go build -o cli .
+```
+
+### Run Tests
+
+```bash
+go test ./services/...
+```
+
+### Regenerate Database Code
+
+After modifying SQL queries:
+
+```bash
+cd services/<service-name> && sqlc generate
+```
+
+### Submit a Pull Request
+
+If you'd like to contribute, please fork the repository and open a pull request to the `main` branch.
