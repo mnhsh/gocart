@@ -36,6 +36,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config) {
 	// Admin product routes (auth + admin role required)
 	mux.HandleFunc("POST /admin/products", adminMiddleware(cfg, proxyHandler(cfg.ProductServiceURL, "/api/products")))
 	mux.HandleFunc("PATCH /admin/products/{productID}", adminMiddleware(cfg, proxyWithPathHandler(cfg.ProductServiceURL, "/api/products/")))
+	mux.HandleFunc("DELETE /admin/products/{productID}", adminMiddleware(cfg, proxyWithPathHandler(cfg.ProductServiceURL, "/api/products/")))
 
 	// Cart routes (all require auth, all need X-User-ID header)
 	mux.HandleFunc("GET /api/cart", authMiddleware(cfg, proxyWithUserIDHandler(cfg.CartServiceURL, "/api/cart")))

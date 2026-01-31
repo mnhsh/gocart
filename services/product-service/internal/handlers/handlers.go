@@ -36,6 +36,10 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config) {
 	mux.HandleFunc("PATCH /api/products/{productID}", func(w http.ResponseWriter, r *http.Request) {
 		handlerProductsUpdate(cfg, w, r)
 	})
+
+	mux.HandleFunc("DELETE /api/products/{productID}", func(w http.ResponseWriter, r *http.Request) {
+		handlerProductsDelete(cfg, w, r)
+	})
 }
 
 func handlerProductsGet(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
@@ -168,4 +172,21 @@ func handlerProductsUpdate(cfg *config.Config, w http.ResponseWriter, r *http.Re
 	}
 
 	response.RespondWithJSON(w, http.StatusOK, product)
+}
+
+func handlerProductsDelete(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
+	productIDStr := r.PathValue("productID")
+	productID, err := uuid.Parse(productIDStr)
+	if err != nil {
+		response.RespondWithError(w, http.StatusBadRequest, "invalid product ID", err)
+		return
+	}
+
+	err = cfg.DB.DeleteProduct(r.Context(), productID)
+	if err != nil {
+		response.RespondWithError(w, http.StatusInternalServerError, "couldn't delete product", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

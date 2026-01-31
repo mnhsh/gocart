@@ -62,6 +62,7 @@ func handlerLogin(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string    `json:"email"`
+		Role      string    `json:"role"`
 	}
 
 	type resp struct {
@@ -129,6 +130,7 @@ func handlerLogin(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email:     user.Email,
+			Role:      user.Role,
 		},
 		Token: accessToken,
 	})
