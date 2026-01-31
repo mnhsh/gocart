@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"context"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -12,6 +13,7 @@ import (
 	"github.com/herodragmon/scalable-ecommerce/services/product-service/internal/config"
 	"github.com/herodragmon/scalable-ecommerce/services/product-service/internal/database"
 	"github.com/herodragmon/scalable-ecommerce/services/product-service/internal/handlers"
+	"github.com/herodragmon/scalable-ecommerce/services/product-service/internal/rabbitmq"
 )
 
 func main() {
@@ -22,6 +24,10 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8082"
+	}
+	rabbitmqURL := os.Getenv("RABBITMQ_URL")
+	if rabbitmqURL == "" {
+    log.Fatal("RABBITMQ_URL is not set")
 	}
 
 	db, err := sql.Open("postgres", dbURL)
@@ -34,6 +40,15 @@ func main() {
 	}
 
 	dbQueries := database.New(db)
+
+	consumer, err := rabbitmq.NewConsumer(rabbitmqURL, db, dbQueries)
+	if err != nil {
+		log.Fatalf("failed to consume: %v",err)
+	}
+	defer consumer.Close()
+
+	go consumer.Start(context.Background())
+
 
 	cfg := &config.Config{
 		DB:       dbQueries,

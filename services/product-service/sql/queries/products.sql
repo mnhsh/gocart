@@ -41,3 +41,9 @@ SET
   updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateStock :one
+UPDATE products 
+SET stock = stock + $2, updated_at = now()
+WHERE id = $1 AND stock + $2 >= 0
+RETURNING *;
